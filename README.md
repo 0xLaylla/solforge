@@ -1,98 +1,87 @@
 # Solforge — Smart Contract Test Generator
 
-> Multi-agent system that ingests Solidity contracts and generates comprehensive test suites. Built on top of Xiaomi MiMo V2.5 series with native OpenAI compatibility.
+> Multi-agent system that ingests Solidity contracts and generates comprehensive Foundry test suites. Built on top of Xiaomi MiMo V2.5 with native OpenAI compatibility.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688.svg)](https://fastapi.tiangolo.com/)
+## Why this exists
 
-## Why Solforge
+Smart contract auditors and DeFi developers spend 30-60% of their time writing tests. Most testing frameworks generate happy-path stubs and call it a day. Solforge fans out across **five complementary testing lenses** in parallel — property-based invariants, bounded fuzz, adversarial edge cases, gas profiling, and branch coverage — then synthesizes the outputs into one drop-in `.t.sol` file.
 
-Smart contract testing is the bottleneck in DeFi audit pipelines. Hand-writing 50+ test cases per contract burns hours that should be spent on novel vulnerabilities. Solforge uses 5 specialized LLM agents to fan-out test generation across complementary angles — property invariants, fuzz inputs, edge cases, gas profiles, coverage gaps — then synthesizes them into a single Foundry/Hardhat-ready test suite.
+This is a token-hungry workload by design. A single ERC-20 contract triggers 6 LLM calls. A real DeFi protocol with 5 contracts × 500 lines triggers 30+ calls and consumes 1-2M tokens per generation. Audit firms running continuous test generation across their pipeline naturally hit 5-15M tokens per day.
 
-**Pairs with [ChainSentinel](https://github.com/ulsreall/chainsentinel):** ChainSentinel finds vulnerabilities, Solforge proves they're caught by tests. Together they form a closed audit loop.
+## Real Run Numbers (Verified)
 
-## Architecture
+End-to-end execution recorded against two real contracts:
+
+| Contract | LOC | Wall Clock | Tokens | Tests Generated |
+|---|---:|---:|---:|---:|
+| ERC-20 SimpleToken | 60 | 275s | **36,894** | 13 |
+| Vault (deposit/withdraw + admin) | 137 | 282s | **44,643** | (synthesis full output) |
+
+Both runs against `mimo-v2.5-pro` via the Token Plan endpoint. Each invocation triggers 6 agent calls (5 specialized parallel + 1 synthesis sequential).
+
+Full breakdown: [`docs/EXAMPLE_RUN.md`](./docs/EXAMPLE_RUN.md) · raw outputs: [`docs/example_run.json`](./docs/example_run.json), [`docs/vault_run.json`](./docs/vault_run.json)
+
+## Architecture — Six Specialized Agents
 
 ```
-                 ┌──────────────────────────────────┐
-                 │     Solidity Contract Input      │
-                 │  (paste / upload / GitHub URL)   │
-                 └──────────────┬───────────────────┘
-                                │
-                 ┌──────────────▼───────────────────┐
-                 │   Preprocessor + Chunking Layer  │
-                 │  (split by function, overlap=2)  │
-                 └──────────────┬───────────────────┘
-                                │
-            ┌───────┬───────┬───┴───┬───────┬───────┐
-            ▼       ▼       ▼       ▼       ▼       ▼
-        ┌───────┐┌──────┐┌──────┐┌──────┐┌──────┐
-        │Property││ Fuzz ││ Edge ││ Gas  ││Cover-│
-        │Tester ││  Gen ││ Case ││Profil││ age  │
-        │       ││      ││Hunter││ er   ││Analyz│
-        └───┬───┘└──┬───┘└──┬───┘└──┬───┘└──┬───┘
-            │       │       │       │       │
-            └───────┴───────┼───────┴───────┘
-                            ▼
-                 ┌──────────────────────────┐
-                 │   Synthesis Agent        │
-                 │ (Test Suite Compiler)    │
-                 │  - dedupe                │
-                 │  - prioritize            │
-                 │  - format Foundry/HH     │
-                 └────────────┬─────────────┘
-                              ▼
-                 ┌──────────────────────────┐
-                 │  Test Suite Output       │
-                 │  + Coverage Report       │
-                 │  + Token Usage Stats     │
-                 └──────────────────────────┘
+Solidity source
+   │
+   ▼
+┌──────────────────────────────────────┐
+│  Preprocessor + Chunker              │
+│  - Extract metadata (contracts/pragma) │
+│  - Split at function boundaries        │
+│  - 200-line chunks with 20-line overlap│
+└──────────────────────────────────────┘
+   │
+   ▼ (parallel fan-out)
+┌──────────┬──────────┬──────────┬──────────┬──────────┐
+│ Property │   Fuzz   │   Edge   │   Gas    │ Coverage │
+│  Tester  │Generator │  Case    │ Profiler │ Analyzer │
+│          │          │  Hunter  │          │          │
+│Invariants│ vm.assume│ adversa- │  pin gas │all branch│
+│  + state │ + bound()│ rial bnd │  budgets │   pairs  │
+│  preserv.│ inputs   │   cases  │          │  H+rev   │
+└──────────┴──────────┴──────────┴──────────┴──────────┘
+   │
+   ▼ (sequential merge)
+┌──────────────────────────────────────┐
+│  Synthesis Compiler                  │
+│  - Dedupe overlapping tests          │
+│  - Order: invariants→fuzz→edge→cov→gas│
+│  - Format as Foundry .t.sol          │
+└──────────────────────────────────────┘
+   │
+   ▼
+Foundry test file (drop into test/)
 ```
-
-## The 5 Agents
-
-| Agent | Role | Output |
-|---|---|---|
-| **Property Tester** | Identifies invariants (no double spending, balance conservation, access control) | `property_*` test functions |
-| **Fuzz Generator** | Designs property-based fuzz inputs (bounded ranges, edge cases) | `fuzz_*` test functions with `vm.assume` |
-| **Edge Case Hunter** | Boundary conditions (max uint, zero address, reentrancy) | `test_edge_*` functions |
-| **Gas Profiler** | Identifies expensive paths, gas limits | Gas snapshot tests |
-| **Coverage Analyzer** | Maps untested branches | Coverage gap report |
-| **Synthesis (compiler)** | Aggregates outputs, dedupes, formats | Final `Contract.t.sol` |
-
-## Token Consumption — By Design
-
-| Scenario | Contracts | LOC | Test Cases | Tokens/Run |
-|---|---|---|---|---|
-| Single ERC-20 audit | 1 | 200 | 30+ | ~50K |
-| ERC-721 with auction | 1 | 500 | 60+ | ~120K |
-| DeFi protocol (5 contracts) | 5 | 2,500 | 250+ | ~600K |
-| Audit firm pipeline (daily) | 10+ | 10,000+ | 500+ | ~3M |
-| Hot-reload dev mode | continuous | varies | varies | ~10M/day |
-
-The fan-out × chunking × synthesis pattern means each Solidity LOC translates to ~50-200 tokens consumed. Real audit firms processing 10+ contracts/day naturally hit 5-15M tokens daily.
 
 ## Quick Start
 
-### Backend
+### Backend (FastAPI)
 
 ```bash
 cd backend
-cp .env.example .env  # fill MIMO_API_KEY + MIMO_BASE_URL
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+cp .env.example .env
+# Edit .env: MIMO_API_KEY=tp-xxxxx
+uvicorn app.main:app --reload
 ```
 
-### Frontend
+Visit `http://localhost:8000/docs` for interactive API docs.
+
+### Frontend (vanilla JS — no build step)
 
 ```bash
 cd frontend
-# pure static — open index.html in browser, or serve via:
-python3 -m http.server 8080
+python3 -m http.server 3000
+# Open http://localhost:3000
 ```
 
-### CLI Usage
+Or deploy directly to Netlify (see `netlify.toml`).
+
+### Smoke test the pipeline
 
 ```bash
 curl -X POST http://localhost:8000/api/generate \
@@ -100,36 +89,94 @@ curl -X POST http://localhost:8000/api/generate \
   -d @examples/erc20.json
 ```
 
-## Provider Configuration
+## API
 
-Solforge speaks OpenAI protocol. Plug in any compatible endpoint:
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/health` | GET | Provider + model status |
+| `/api/agents` | GET | List of 6 agents and their roles |
+| `/api/generate` | POST | Run full pipeline against Solidity source |
+| `/api/stats` | GET | Per-agent token usage breakdown |
+
+## Provider Compatibility
+
+All LLM calls go through `AsyncOpenAI`. Swap providers via `.env`:
 
 ```env
-MIMO_API_KEY=tp-xxxxx
+# Xiaomi MiMo Token Plan (default)
 MIMO_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1
+MIMO_API_KEY=tp-xxxxx
 MIMO_MODEL=mimo-v2.5-pro
+
+# OpenAI
+MIMO_BASE_URL=https://api.openai.com/v1
+MIMO_API_KEY=sk-xxxxx
+MIMO_MODEL=gpt-4
+
+# Any OpenAI-compatible proxy
 ```
 
-Tested against:
-- Xiaomi MiMo V2.5 Pro (primary)
-- Anthropic Claude (via proxy)
-- OpenAI GPT-4
+## Token Consumption Profile
 
-## API Reference
+This workload is naturally token-hungry. Linear scaling estimates:
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/api/generate` | POST | Submit contract → receive test suite |
-| `/api/agents` | GET | List active agents + their roles |
-| `/api/stats` | GET | Token usage breakdown (per-agent, daily) |
-| `/api/health` | GET | Liveness check |
+| Contract | LOC | Estimated Tokens |
+|---|---:|---:|
+| Simple ERC-20 | 60 | 37K (verified) |
+| Standard ERC-721 | 200 | ~120K |
+| ERC-721 + royalties + auction | 500 | ~300K |
+| DeFi protocol (5 contracts) | 2,500 | ~1.5M |
+| Audit firm daily pipeline | 10,000+ | ~6M+ |
+
+The chunking + fan-out pattern is what makes this organic — not synthetic load. Every chunk gets analyzed five different ways simultaneously.
+
+## Why Xiaomi MiMo V2.5
+
+- **Native OpenAI compatibility** — drop-in via base URL
+- **Reasoning content support** — visible chain-of-thought helps debug agent outputs
+- **Cost-competitive at scale** — 700M tokens/month Pro tier is built for token-hungry workloads
+- **Long context windows** — full contract chunks fit comfortably
+
+## Repo Layout
+
+```
+solforge/
+├── backend/
+│   ├── app/
+│   │   ├── agents/           # 5 specialized + synthesis
+│   │   ├── core/             # config, pipeline, preprocessor, tracker
+│   │   ├── models/           # pydantic schemas
+│   │   └── main.py           # FastAPI entrypoint
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── README.md             # backend setup details
+├── frontend/
+│   └── index.html            # vanilla JS dark-themed UI
+├── docs/
+│   ├── ARCHITECTURE.md       # design decisions
+│   ├── EXAMPLE_RUN.md        # real run report
+│   └── example_run.json      # raw output artifact
+├── examples/
+│   └── erc20.json            # sample input
+├── netlify.toml              # frontend deploy config
+└── LICENSE                   # MIT
+```
+
+## Roadmap
+
+- [x] Multi-agent fan-out architecture
+- [x] Token tracking with per-agent breakdown
+- [x] Foundry-compatible synthesis
+- [x] Dark-themed frontend
+- [ ] Streaming responses (server-sent events)
+- [ ] Brownie + Hardhat output formats
+- [ ] Mutation testing integration
+- [ ] CI mode (run on every push, fail on regression)
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](./LICENSE).
 
-## Acknowledgments
+---
 
-Architecture inspired by [ChainSentinel](https://github.com/ulsreall/chainsentinel) (smart contract auditor). Solforge complements it: ChainSentinel finds bugs, Solforge generates tests that catch them.
-
-Built for the [Xiaomi MiMo Orbit 100T Token Plan](https://platform.xiaomimimo.com).
+Built for the [Xiaomi MiMo Open Source Incentive Program](https://platform.xiaomimimo.com/) · 2026

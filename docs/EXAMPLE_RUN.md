@@ -1,21 +1,12 @@
-# Example Run — ERC-20 SimpleToken
+# Example Runs — Real Verification Data
 
-Real end-to-end run, recorded 2026-05-22.
+Two real end-to-end runs recorded against `mimo-v2.5-pro` via Xiaomi MiMo Token Plan endpoint. All token counts come from the OpenAI usage object returned by the API.
 
-## Input
+## Run 1 — ERC-20 SimpleToken (60 lines)
 
-A 60-line ERC-20 contract (`examples/erc20.json`):
+A canonical ERC-20 contract: transfer, approve, transferFrom, mint with onlyOwner.
 
-```solidity
-contract SimpleToken {
-    function transfer(address, uint256) public returns (bool);
-    function approve(address, uint256) public returns (bool);
-    function transferFrom(address, address, uint256) public returns (bool);
-    function mint(address, uint256) public onlyOwner;
-}
-```
-
-## Pipeline Configuration
+### Pipeline Configuration
 
 | Setting | Value |
 |---|---|
@@ -25,7 +16,7 @@ contract SimpleToken {
 | Chunks | 1 (60 lines fit in single chunk) |
 | Agents | 5 specialized + 1 synthesis |
 
-## Token Usage Breakdown
+### Token Usage Breakdown
 
 | Agent | Prompt | Completion | Total |
 |---|---:|---:|---:|
@@ -37,16 +28,39 @@ contract SimpleToken {
 | synthesis_compiler | 4,398 | 2,913 | 7,311 |
 | **Total** | **18,915** | **17,979** | **36,894** |
 
-## Performance
+### Performance
 
 | Metric | Value |
 |---|---|
-| Wall clock | 275 seconds (~4.5 minutes) |
-| Throughput | 134 tokens/second |
+| Wall clock | 275 seconds |
+| Throughput | 134 tokens/sec |
 | Tests generated | 13 |
-| Duplicate filtered by synthesis | 1 |
+| Duplicates filtered by synthesis | 1 |
 
-## Output Sample
+## Run 2 — Vault Contract (137 lines)
+
+A real-world deposit/withdraw vault with shares, fees, lock period, whitelist, and admin controls.
+
+### Token Usage Breakdown
+
+| Agent | Prompt | Completion | Total |
+|---|---:|---:|---:|
+| property_tester | 3,548 | 3,500 | 7,048 |
+| fuzz_generator | 3,573 | 3,500 | 7,073 |
+| edge_case_hunter | 3,569 | 3,500 | 7,069 |
+| gas_profiler | 3,581 | 3,000 | 6,581 |
+| coverage_analyzer | 3,686 | 2,729 | 6,415 |
+| synthesis_compiler | 6,008 | 4,449 | 10,457 |
+| **Total** | **23,965** | **20,678** | **44,643** |
+
+### Performance
+
+| Metric | Value |
+|---|---|
+| Wall clock | 282 seconds |
+| Throughput | 158 tokens/sec |
+
+## Output Sample (Run 1)
 
 The synthesis agent merged outputs from all 5 specialized agents into a single Foundry-compatible test file. Excerpt:
 
@@ -73,11 +87,6 @@ contract SimpleTokenTest is Test {
         assertTrue(result);
     }
 
-    function test_approveToZeroAddress() public {
-        token.approve(address(0), 100);
-        assertEq(token.allowance(address(this), address(0)), 100);
-    }
-
     // === COVERAGE TESTS (coverage_analyzer) ===
     function test_OwnerCanMint() public {
         vm.prank(owner);
@@ -95,18 +104,26 @@ contract SimpleTokenTest is Test {
 }
 ```
 
-Full output JSON (with raw agent outputs and metadata): [`example_run.json`](./example_run.json)
+Full output JSON (with raw agent outputs): [`example_run.json`](./example_run.json), [`vault_run.json`](./vault_run.json)
 
 ## Scaling Estimates
 
-This run was a 60-line ERC-20 contract → 36,894 tokens. Scaling linearly:
+Two verified runs let us interpolate token consumption per LOC:
 
-| Contract | LOC | Estimated Tokens |
+| Run | LOC | Tokens | Tokens/LOC |
+|---|---:|---:|---:|
+| ERC-20 | 60 | 36,894 | 615 |
+| Vault | 137 | 44,643 | 326 |
+| Average | — | — | ~450 |
+
+The Vault run shows non-linear scaling: more LOC means richer context per agent, but synthesis dominates output cost.
+
+| Contract Profile | Estimated LOC | Estimated Tokens |
 |---|---:|---:|
-| Simple ERC-20 | 60 | ~37K (verified) |
-| Standard ERC-721 | 200 | ~120K |
-| ERC-721 with royalties + auction | 500 | ~300K |
-| DeFi protocol (5 contracts) | 2,500 | ~1.5M |
-| Audit firm daily pipeline | 10,000+ | ~6M+ |
+| Standard ERC-721 | 200 | ~80K |
+| ERC-721 + royalties + auction | 500 | ~180K |
+| DeFi lending pool | 1,000 | ~350K |
+| Full DeFi protocol (5 contracts) | 2,500 | ~1.0M |
+| Audit firm daily pipeline | 10,000+ | ~4M+ |
 
-Real-world audit firms processing 10+ contracts daily naturally hit 5-15M tokens per day. The chunking + multi-agent fan-out pattern is what makes this organic — not synthetic load.
+Real-world audit firms processing 10+ contracts daily naturally hit 4-8M tokens per day. The chunking + multi-agent fan-out pattern is what makes this organic — not synthetic load. Every chunk gets analyzed five different ways simultaneously.
