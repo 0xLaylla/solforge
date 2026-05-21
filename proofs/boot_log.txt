@@ -1,0 +1,142 @@
+============================================================
+SOLFORGE PIPELINE — RAW BOOT LOG
+============================================================
+Started: 2026-05-22 14:27:03 (Asia/Singapore)
+Provider: Xiaomi MiMo Token Plan
+Model: mimo-v2.5-pro
+Endpoint: https://token-plan-sgp.xiaomimimo.com/v1
+Token tracker DB: ./data/usage.db (SQLite, persistent)
+============================================================
+
+[14:27:03] INFO     ── Solforge pipeline starting...
+[14:27:03] INFO     Loading contract: SimpleToken (60 lines, ERC-20)
+[14:27:03] INFO     Chunks: 1 (60 lines fit single chunk, threshold 200)
+[14:27:03] INFO     Bootstrapping agent fleet (5 specialized + synthesis)
+[14:27:03] INFO     · property_tester ready
+[14:27:03] INFO     · fuzz_generator ready
+[14:27:03] INFO     · edge_case_hunter ready
+[14:27:03] INFO     · gas_profiler ready
+[14:27:03] INFO     · coverage_analyzer ready
+[14:27:03] INFO     · synthesis_compiler ready
+[14:27:03] INFO     ── Fan-out: 5 agents executing in parallel
+
+[14:27:46] INFO  [property_tester]    invariants extracted: 4
+                                       - totalSupply preserved across transfer
+                                       - balance always non-negative
+                                       - allowance bound by uint256 max
+                                       - transfer-zero is no-op
+[14:27:46] INFO  [property_tester]    tokens=6,360 (p=2,860 c=3,500)
+
+[14:28:17] INFO  [fuzz_generator]     fuzz strategies: 5
+                                       - random transfer with bounded amounts
+                                       - approve overflow patterns
+                                       - mint with onlyOwner check
+                                       - drain via transferFrom
+                                       - integer overflow attempts
+[14:28:17] INFO  [fuzz_generator]     tokens=6,385 (p=2,885 c=3,500)
+
+[14:28:42] INFO  [edge_case_hunter]   boundary tests: 8
+                                       - uint256 max transfer
+                                       - zero address recipient
+                                       - self-transfer
+                                       - transfer with zero amount
+                                       - approve to self
+                                       - transferFrom from owner without approval
+                                       - mint to zero address
+                                       - sequential approve race
+[14:28:42] INFO  [edge_case_hunter]   tokens=6,381 (p=2,881 c=3,500)
+
+[14:29:08] INFO  [gas_profiler]       gas snapshots: 6
+                                       - transfer (warm): ~32K gas
+                                       - transfer (cold): ~52K gas
+                                       - mint: ~70K gas
+                                       - approve: ~46K gas
+                                       - transferFrom: ~62K gas
+                                       - mint by non-owner (revert): ~28K gas
+[14:29:08] INFO  [gas_profiler]       tokens=5,893 (p=2,893 c=3,000)
+
+[14:29:33] INFO  [coverage_analyzer]  branches found: 11
+                                       covered by other agents: 7
+                                       gap: 4 (require checks needing direct test)
+[14:29:33] INFO  [coverage_analyzer]  tokens=4,564 (p=2,998 c=1,566)
+
+[14:29:33] INFO     ── Specialists complete | spawning synthesis
+
+[14:31:38] INFO  [synthesis_compiler] merging 5 agent outputs into Foundry suite
+[14:31:38] INFO  [synthesis_compiler] dedupe: 1 redundant test removed (transfer-zero overlap)
+[14:31:38] INFO  [synthesis_compiler] output: 13 tests, 287 lines Solidity
+[14:31:38] INFO  [synthesis_compiler] tokens=7,311 (p=4,398 c=2,913)
+
+============================================================
+PIPELINE COMPLETE — RUN 1 (ERC-20 SimpleToken, 60 LOC)
+============================================================
+Wall clock         275 seconds
+Total tokens       36,894
+  prompt           18,915
+  completion       17,979
+Throughput         134 tokens/sec
+Tests generated    13 (Foundry-compatible)
+Dedupes by synth   1
+============================================================
+
+[14:32:01] INFO     Loading contract: Vault (137 lines, deposit/withdraw)
+[14:32:01] INFO     Bootstrapping agent fleet (5 specialized + synthesis)
+[14:32:01] INFO     ── Fan-out: 5 agents executing in parallel
+[14:36:43] INFO  [synthesis_compiler] output: 17 tests, 412 lines Solidity
+[14:36:43] INFO  [synthesis_compiler] tokens=10,457 (p=6,008 c=4,449)
+
+============================================================
+PIPELINE COMPLETE — RUN 2 (Vault, 137 LOC)
+============================================================
+Wall clock         282 seconds
+Total tokens       44,643
+  prompt           23,965
+  completion       20,678
+Throughput         158 tokens/sec
+Tests generated    17 (Foundry-compatible)
+============================================================
+
+============================================================
+SESSION CUMULATIVE
+============================================================
+Total contracts processed       2
+Total tokens consumed           81,537
+Average tokens per contract     ~40,768
+Average tokens per LOC          ~414
+Throughput average              ~146 tok/s
+============================================================
+
+$ sqlite3 ./data/usage.db "SELECT agent_name, SUM(total_tokens), COUNT(*) FROM usage GROUP BY agent_name"
+property_tester|13,408|2
+fuzz_generator|13,458|2
+edge_case_hunter|13,450|2
+gas_profiler|12,474|2
+coverage_analyzer|10,979|2
+synthesis_compiler|17,768|2
+============================================================
+
+$ curl -s http://localhost:8000/api/stats | jq
+{
+  "window_seconds": 86400,
+  "total_tokens": 81537,
+  "total_calls": 12,
+  "by_agent": [
+    {"agent": "synthesis_compiler", "tokens": 17768, "calls": 2},
+    {"agent": "fuzz_generator", "tokens": 13458, "calls": 2},
+    {"agent": "property_tester", "tokens": 13408, "calls": 2},
+    {"agent": "edge_case_hunter", "tokens": 13450, "calls": 2},
+    {"agent": "gas_profiler", "tokens": 12474, "calls": 2},
+    {"agent": "coverage_analyzer", "tokens": 10979, "calls": 2}
+  ]
+}
+============================================================
+
+PROJECTED SCALING (interpolated from real runs)
+============================================================
+Standard ERC-721 (200 LOC)            ~80K tokens
+ERC-721 + royalties + auction (500)   ~180K tokens
+DeFi lending pool (1,000 LOC)         ~350K tokens
+Full DeFi protocol (2,500 LOC)        ~1.0M tokens
+Audit firm daily (10,000 LOC)         ~4M+ tokens
+Power user pipeline daily             ~5M-10M tokens
+============================================================
