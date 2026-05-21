@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solforge — Multi-agent Solidity Test Generator</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --bg-elev: #14141d;
+  --border: #2a2a3a;
+  --text: #e8e8ef;
+  --text-dim: #8b8b9e;
+  --accent: #f97316;
+  --accent-dim: #c2410c;
+  --success: #10b981;
+  --error: #ef4444;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+header {
+  border-bottom: 1px solid var(--border);
+  padding: 24px 40px;
+  background: var(--bg-elev);
+}
+header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+}
+header p {
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+main {
+  max-width: 1200px;
+  margin: 40px auto;
+  padding: 0 40px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 32px;
+}
+.card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+}
+.card h2 {
+  font-size: 16px;
+  margin-bottom: 16px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+textarea, input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  font-family: inherit;
+  font-size: 13px;
+}
+textarea {
+  height: 320px;
+  resize: vertical;
+}
+button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 12px 24px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: background 0.15s;
+}
+button:hover { background: var(--accent-dim); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.output {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+.status {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.status.ok { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+.status.err { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+.status.run { background: rgba(249, 115, 22, 0.15); color: var(--accent); }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+.stat {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+}
+.stat-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-top: 4px;
+}
+.agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.agent {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.agent-name {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+.agent-role {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-top: 2px;
+}
+footer {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-dim);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 40px;
+}
+@media (max-width: 768px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>solforge</h1>
+  <p>multi-agent solidity test generator · powered by xiaomi mimo v2.5</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Input — Solidity Source</h2>
+    <textarea id="source" placeholder="// SPDX-License-Identifier: MIT&#10;pragma solidity ^0.8.20;&#10;&#10;contract MyToken { ... }"></textarea>
+    <button id="generate-btn">Generate Test Suite</button>
+    <div id="status" class="status" style="display:none;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Output — Foundry Test Suite</h2>
+    <div id="output" class="output">// Generated tests will appear here</div>
+  </div>
+
+  <div class="card">
+    <h2>Agents</h2>
+    <div id="agents-list" class="agents-list">Loading…</div>
+  </div>
+
+  <div class="card">
+    <h2>Token Usage (24h)</h2>
+    <div id="stats" class="stats">
+      <div class="stat"><div class="stat-label">Total Tokens</div><div id="stat-total" class="stat-value">—</div></div>
+      <div class="stat"><div class="stat-label">Total Calls</div><div id="stat-calls" class="stat-value">—</div></div>
+      <div class="stat"><div class="stat-label">Daily Budget</div><div id="stat-budget" class="stat-value">—</div></div>
+      <div class="stat"><div class="stat-label">Used</div><div id="stat-pct" class="stat-value">—</div></div>
+    </div>
+    <div id="per-agent-stats" class="agents-list" style="margin-top:16px;"></div>
+  </div>
+</main>
+
+<footer>
+  <p>solforge · MIT licensed · <a href="https://github.com/OxNolan/solforge" style="color:var(--accent);">github.com/OxNolan/solforge</a></p>
+</footer>
+
+<script>
+const API = window.SOLFORGE_API || "http://localhost:8000";
+
+async function api(path) {
+  const r = await fetch(API + path);
+  return r.json();
+}
+
+async function loadAgents() {
+  try {
+    const list = await api("/api/agents");
+    document.getElementById("agents-list").innerHTML = list.map(a =>
+      `<div class="agent"><div class="agent-name">${a.name}</div><div class="agent-role">${a.role}</div></div>`
+    ).join("");
+  } catch (e) {
+    document.getElementById("agents-list").textContent = "Backend offline";
+  }
+}
+
+async function loadStats() {
+  try {
+    const s = await api("/api/stats");
+    document.getElementById("stat-total").textContent = s.grand_total_tokens.toLocaleString();
+    document.getElementById("stat-calls").textContent = s.total_calls.toLocaleString();
+    document.getElementById("stat-budget").textContent = s.daily_budget.toLocaleString();
+    document.getElementById("stat-pct").textContent = s.budget_used_pct + "%";
+    document.getElementById("per-agent-stats").innerHTML = Object.entries(s.per_agent).map(([k, v]) =>
+      `<div class="agent"><div class="agent-name">${k}</div><div class="agent-role">${v.total.toLocaleString()} tokens · ${v.calls} calls</div></div>`
+    ).join("");
+  } catch (e) {
+    document.getElementById("stat-total").textContent = "—";
+  }
+}
+
+document.getElementById("generate-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("generate-btn");
+  const status = document.getElementById("status");
+  const output = document.getElementById("output");
+  const source = document.getElementById("source").value;
+
+  if (source.length < 20) {
+    status.style.display = "block";
+    status.className = "status err";
+    status.textContent = "Source too short. Paste a real contract.";
+    return;
+  }
+
+  btn.disabled = true;
+  status.style.display = "block";
+  status.className = "status run";
+  status.textContent = "Running 5 agents in parallel + synthesis (60-180s)…";
+  output.textContent = "// Generating…";
+
+  try {
+    const r = await fetch(API + "/api/generate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({source: source, max_chunk_lines: 200}),
+    });
+    const data = await r.json();
+    if (data.detail) throw new Error(data.detail);
+
+    output.textContent = data.synthesis || JSON.stringify(data, null, 2);
+    status.className = "status ok";
+    const totalTokens = data.token_usage.reduce((s, e) => s + e.total_tokens, 0);
+    status.textContent = `Done · ${data.token_usage.length} agent calls · ${totalTokens.toLocaleString()} tokens`;
+    loadStats();
+  } catch (e) {
+    status.className = "status err";
+    status.textContent = "Error: " + e.message;
+    output.textContent = "// generation failed";
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadAgents();
+loadStats();
+setInterval(loadStats, 15000);
+</script>
+</body>
+</html>
